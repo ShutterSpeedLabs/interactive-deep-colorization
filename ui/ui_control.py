@@ -6,14 +6,18 @@ import cv2
 
 
 class UserEdit(object):
-    def __init__(self, mode, win_size, load_size, img_size):
+    def __init__(self, mode, win_size, load_size, img_size, actual_load_size=None):
         self.mode = mode
         self.win_size = win_size
         self.img_size = img_size
         self.load_size = load_size
+        # Use actual_load_size if provided, otherwise use load_size
+        self.actual_load_size = actual_load_size if actual_load_size is not None else (load_size, load_size)
         print('image_size', self.img_size)
+        print('actual_load_size', self.actual_load_size)
         max_width = np.max(self.img_size)
-        self.scale = float(max_width) / self.load_size
+        max_load = max(self.actual_load_size)
+        self.scale = float(max_width) / max_load
         self.dw = int((self.win_size - img_size[0]) // 2)
         self.dh = int((self.win_size - img_size[1]) // 2)
         self.img_w = img_size[0]
@@ -22,8 +26,9 @@ class UserEdit(object):
         print(self)
 
     def scale_point(self, in_x, in_y, w):
-        x = int((in_x - self.dw) / float(self.img_w) * self.load_size) + w
-        y = int((in_y - self.dh) / float(self.img_h) * self.load_size) + w
+        model_w, model_h = self.actual_load_size
+        x = int((in_x - self.dw) / float(self.img_w) * model_w) + w
+        y = int((in_y - self.dh) / float(self.img_h) * model_h) + w
         return x, y
 
     def __str__(self):
@@ -31,8 +36,8 @@ class UserEdit(object):
 
 
 class PointEdit(UserEdit):
-    def __init__(self, win_size, load_size, img_size):
-        UserEdit.__init__(self, 'point', win_size, load_size, img_size)
+    def __init__(self, win_size, load_size, img_size, actual_load_size=None):
+        UserEdit.__init__(self, 'point', win_size, load_size, img_size, actual_load_size)
 
     def add(self, pnt, color, userColor, width, ui_count):
         self.pnt = pnt
@@ -86,9 +91,10 @@ class PointEdit(UserEdit):
 
 
 class UIControl:
-    def __init__(self, win_size=256, load_size=512):
+    def __init__(self, win_size=256, load_size=512, actual_load_size=None):
         self.win_size = win_size
         self.load_size = load_size
+        self.actual_load_size = actual_load_size if actual_load_size is not None else (load_size, load_size)
         self.reset()
         self.userEdit = None
         self.userEdits = []
@@ -101,6 +107,9 @@ class UIControl:
 
     def setImageSize(self, img_size):
         self.img_size = img_size
+    
+    def setActualLoadSize(self, actual_load_size):
+        self.actual_load_size = actual_load_size
 
     def addStroke(self, prevPnt, nextPnt, color, userColor, width):
         pass
@@ -132,7 +141,7 @@ class UIControl:
         if self.userEdit is None:
             # Save state before adding new point
             self.save_state()
-            self.userEdit = PointEdit(self.win_size, self.load_size, self.img_size)
+            self.userEdit = PointEdit(self.win_size, self.load_size, self.img_size, self.actual_load_size)
             self.userEdits.append(self.userEdit)
             print('add user edit %d\n' % len(self.userEdits))
             self.userEdit.add(pnt, color, userColor, width, self.ui_count)
@@ -185,8 +194,7 @@ class UIControl:
         return unique_colors / 255.0
 
     def get_input(self):
-        h = self.load_size
-        w = self.load_size
+        w, h = self.actual_load_size
         im = np.zeros((h, w, 3), np.uint8)
         mask = np.zeros((h, w, 1), np.uint8)
         vis_im = np.zeros((h, w, 3), np.uint8)

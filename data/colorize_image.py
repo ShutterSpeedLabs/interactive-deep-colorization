@@ -37,8 +37,9 @@ def rgb2lab_transpose(img_rgb):
 
 
 class ColorizeImageBase():
-    def __init__(self, Xd=256, Xfullres_max=10000):
+    def __init__(self, Xd=256, Xfullres_max=10000, use_dynamic_size=False):
         self.Xd = Xd
+        self.use_dynamic_size = use_dynamic_size
         self.img_l_set = False
         self.net_set = False
         self.Xfullres_max = Xfullres_max  # maximum size of maximum dimension
@@ -55,7 +56,20 @@ class ColorizeImageBase():
         self.img_rgb_fullres = im.copy()
         self._set_img_lab_fullres_()
 
-        im = cv2.resize(im, (self.Xd, self.Xd))
+        if self.use_dynamic_size:
+            # Use actual image dimensions (ensure divisible by 4)
+            h, w = im.shape[:2]
+            h = int(h / 4.0) * 4
+            w = int(w / 4.0) * 4
+            im = cv2.resize(im, (w, h))
+            self.Xd = max(h, w)  # Update Xd for compatibility
+            self.current_h = h
+            self.current_w = w
+        else:
+            im = cv2.resize(im, (self.Xd, self.Xd))
+            self.current_h = self.Xd
+            self.current_w = self.Xd
+        
         self.img_rgb = im.copy()
         # self.img_rgb = sp.misc.imresize(plt.imread(input_path),(self.Xd,self.Xd)).transpose((2,0,1))
 
@@ -71,7 +85,20 @@ class ColorizeImageBase():
 
         self.img_l_set = True
 
-        self.img_rgb = input_image
+        if self.use_dynamic_size:
+            # Use actual image dimensions (ensure divisible by 4)
+            h, w = input_image.shape[:2]
+            h = int(h / 4.0) * 4
+            w = int(w / 4.0) * 4
+            self.img_rgb = cv2.resize(input_image, (w, h))
+            self.Xd = max(h, w)  # Update Xd for compatibility
+            self.current_h = h
+            self.current_w = w
+        else:
+            self.img_rgb = input_image
+            self.current_h = self.Xd
+            self.current_w = self.Xd
+        
         # convert into lab space
         self._set_img_lab_()
         self._set_img_lab_mc_()
@@ -114,7 +141,8 @@ class ColorizeImageBase():
 
     def get_img_gray(self):
         # Get black and white image
-        return lab2rgb_transpose(self.img_l, np.zeros((2, self.Xd, self.Xd)))
+        h, w = self.img_l.shape[1], self.img_l.shape[2]
+        return lab2rgb_transpose(self.img_l, np.zeros((2, h, w)))
 
     def get_img_gray_fullres(self):
         # Get black and white image
@@ -199,9 +227,9 @@ class ColorizeImageBase():
 
 
 class ColorizeImageTorch(ColorizeImageBase):
-    def __init__(self, Xd=256, maskcent=False):
+    def __init__(self, Xd=256, maskcent=False, use_dynamic_size=False):
         print('ColorizeImageTorch instantiated')
-        ColorizeImageBase.__init__(self, Xd)
+        ColorizeImageBase.__init__(self, Xd, use_dynamic_size=use_dynamic_size)
         self.l_norm = 1.
         self.ab_norm = 1.
         self.l_mean = 50.
@@ -280,21 +308,19 @@ class ColorizeImageTorch(ColorizeImageBase):
 
     def get_img_gray(self):
         # Get black and white image
-        return lab2rgb_transpose(self.img_l, np.zeros((2, self.Xd, self.Xd)))
+        h, w = self.img_l.shape[1], self.img_l.shape[2]
+        return lab2rgb_transpose(self.img_l, np.zeros((2, h, w)))
 
 
 class ColorizeImageTorchDist(ColorizeImageTorch):
-    def __init__(self, Xd=256, maskcent=False):
-        ColorizeImageTorch.__init__(self, Xd)
+    def __init__(self, Xd=256, maskcent=False, use_dynamic_size=False):
+        ColorizeImageTorch.__init__(self, Xd, maskcent=maskcent, use_dynamic_size=use_dynamic_size)
         self.dist_ab_set = False
         self.pts_grid = np.array(np.meshgrid(np.arange(-110, 120, 10), np.arange(-110, 120, 10))).reshape((2, 529)).T
         self.in_hull = np.ones(529, dtype=bool)
         self.AB = self.pts_grid.shape[0]  # 529
         self.A = int(np.sqrt(self.AB))  # 23
         self.B = int(np.sqrt(self.AB))  # 23
-        self.dist_ab_full = np.zeros((self.AB, self.Xd, self.Xd))
-        self.dist_ab_grid = np.zeros((self.A, self.B, self.Xd, self.Xd))
-        self.dist_entropy = np.zeros((self.Xd, self.Xd))
         self.mask_cent = .5 if maskcent else 0
 
     def prep_net(self, gpu_id=None, path='', dist=True, S=.2):
@@ -317,11 +343,19 @@ class ColorizeImageTorchDist(ColorizeImageTorch):
         self.dist_ab = self.dist_ab[0, :, :, :].cpu().data.numpy()
         self.dist_ab_set = True
 
+        # Get actual dimensions
+        h, w = self.dist_ab.shape[1], self.dist_ab.shape[2]
+        
+        # Reinitialize arrays with current dimensions
+        self.dist_ab_full = np.zeros((self.AB, h, w))
+        self.dist_ab_grid = np.zeros((self.A, self.B, h, w))
+        self.dist_entropy = np.zeros((h, w))
+        
         # full grid, ABxXxX, AB = 529
         self.dist_ab_full[self.in_hull, :, :] = self.dist_ab
 
         # gridded, AxBxXxX, A = 23
-        self.dist_ab_grid = self.dist_ab_full.reshape((self.A, self.B, self.Xd, self.Xd))
+        self.dist_ab_grid = self.dist_ab_full.reshape((self.A, self.B, h, w))
 
         # return
         return function_return
@@ -380,9 +414,9 @@ class ColorizeImageTorchDist(ColorizeImageTorch):
 
 
 class ColorizeImageCaffe(ColorizeImageBase):
-    def __init__(self, Xd=256):
+    def __init__(self, Xd=256, use_dynamic_size=False):
         print('ColorizeImageCaffe instantiated')
-        ColorizeImageBase.__init__(self, Xd)
+        ColorizeImageBase.__init__(self, Xd, use_dynamic_size=use_dynamic_size)
         self.l_norm = 1.
         self.ab_norm = 1.
         self.l_mean = 50.
@@ -446,13 +480,14 @@ class ColorizeImageCaffe(ColorizeImageBase):
 
     def get_img_gray(self):
         # Get black and white image
-        return lab2rgb_transpose(self.img_l, np.zeros((2, self.Xd, self.Xd)))
+        h, w = self.img_l.shape[1], self.img_l.shape[2]
+        return lab2rgb_transpose(self.img_l, np.zeros((2, h, w)))
 
 
 class ColorizeImageCaffeGlobDist(ColorizeImageCaffe):
     # Caffe colorization, with additional global histogram as input
-    def __init__(self, Xd=256):
-        ColorizeImageCaffe.__init__(self, Xd)
+    def __init__(self, Xd=256, use_dynamic_size=False):
+        ColorizeImageCaffe.__init__(self, Xd, use_dynamic_size=use_dynamic_size)
         self.glob_mask_mult = 1.
         self.glob_layer = 'glob_ab_313_mask'
 
@@ -472,8 +507,8 @@ class ColorizeImageCaffeGlobDist(ColorizeImageCaffe):
 
 class ColorizeImageCaffeDist(ColorizeImageCaffe):
     # caffe model which includes distribution prediction
-    def __init__(self, Xd=256):
-        ColorizeImageCaffe.__init__(self, Xd)
+    def __init__(self, Xd=256, use_dynamic_size=False):
+        ColorizeImageCaffe.__init__(self, Xd, use_dynamic_size=use_dynamic_size)
         self.dist_ab_set = False
         self.scale_S_layer = 'scale_S'
         self.dist_ab_S_layer = 'dist_ab_S'  # softened distribution layer
@@ -482,9 +517,6 @@ class ColorizeImageCaffeDist(ColorizeImageCaffe):
         self.AB = self.pts_grid.shape[0]  # 529
         self.A = int(np.sqrt(self.AB))  # 23
         self.B = int(np.sqrt(self.AB))  # 23
-        self.dist_ab_full = np.zeros((self.AB, self.Xd, self.Xd))
-        self.dist_ab_grid = np.zeros((self.A, self.B, self.Xd, self.Xd))
-        self.dist_entropy = np.zeros((self.Xd, self.Xd))
 
     def prep_net(self, gpu_id, prototxt_path='', caffemodel_path='', S=.2):
         ColorizeImageCaffe.prep_net(self, gpu_id, prototxt_path=prototxt_path, caffemodel_path=caffemodel_path)
@@ -506,11 +538,19 @@ class ColorizeImageCaffeDist(ColorizeImageCaffe):
         self.dist_ab = self.net.blobs[self.dist_ab_S_layer].data[0, :, :, :]
         self.dist_ab_set = True
 
+        # Get actual dimensions
+        h, w = self.dist_ab.shape[1], self.dist_ab.shape[2]
+        
+        # Reinitialize arrays with current dimensions
+        self.dist_ab_full = np.zeros((self.AB, h, w))
+        self.dist_ab_grid = np.zeros((self.A, self.B, h, w))
+        self.dist_entropy = np.zeros((h, w))
+        
         # full grid, ABxXxX, AB = 529
         self.dist_ab_full[self.in_hull, :, :] = self.dist_ab
 
         # gridded, AxBxXxX, A = 23
-        self.dist_ab_grid = self.dist_ab_full.reshape((self.A, self.B, self.Xd, self.Xd))
+        self.dist_ab_grid = self.dist_ab_full.reshape((self.A, self.B, h, w))
 
         # return
         return function_return

@@ -34,8 +34,9 @@ class GUIDraw(QWidget):
         self.dist_model = dist_model  # distribution predictor, could be empty
         self.win_size = win_size
         self.load_size = load_size
+        self.actual_load_size = (load_size, load_size)  # Will be updated when image is loaded
         self.setFixedSize(win_size, win_size)
-        self.uiControl = UIControl(win_size=win_size, load_size=load_size)
+        self.uiControl = UIControl(win_size=win_size, load_size=load_size, actual_load_size=self.actual_load_size)
         self.move(win_size, win_size)
         self.movie = True
         self.init_color()  # initialize color
@@ -84,7 +85,22 @@ class GUIDraw(QWidget):
         h, w, c = self.im_full.shape
         max_width = max(h, w)
         r = self.win_size / float(max_width)
-        self.scale = float(self.win_size) / self.load_size
+        
+        # Determine actual model input size
+        if hasattr(self.model, 'use_dynamic_size') and self.model.use_dynamic_size:
+            # Use actual dimensions (divisible by 4)
+            model_h = int(h / 4.0) * 4
+            model_w = int(w / 4.0) * 4
+            self.actual_load_size = (model_w, model_h)
+            print(f'Using dynamic size: {model_w}x{model_h}')
+        else:
+            # Use fixed load_size
+            model_h = self.load_size
+            model_w = self.load_size
+            self.actual_load_size = (model_w, model_h)
+            print(f'Using fixed size: {model_w}x{model_h}')
+        
+        self.scale = float(self.win_size) / max(model_w, model_h)
         print('scale = %f' % self.scale)
         rw = int(round(r * w / 4.0) * 4)
         rh = int(round(r * h / 4.0) * 4)
@@ -96,11 +112,12 @@ class GUIDraw(QWidget):
         self.win_w = rw
         self.win_h = rh
         self.uiControl.setImageSize((rw, rh))
+        self.uiControl.setActualLoadSize(self.actual_load_size)
         im_gray = cv2.cvtColor(im_bgr, cv2.COLOR_BGR2GRAY)
         self.im_gray3 = cv2.cvtColor(im_gray, cv2.COLOR_GRAY2BGR)
 
         self.gray_win = cv2.resize(self.im_gray3, (rw, rh), interpolation=cv2.INTER_CUBIC)
-        im_bgr = cv2.resize(im_bgr, (self.load_size, self.load_size), interpolation=cv2.INTER_CUBIC)
+        im_bgr = cv2.resize(im_bgr, self.actual_load_size, interpolation=cv2.INTER_CUBIC)
         self.im_rgb = cv2.cvtColor(im_bgr, cv2.COLOR_BGR2RGB)
         lab_win = color.rgb2lab(self.im_win[:, :, ::-1])
 
@@ -110,8 +127,8 @@ class GUIDraw(QWidget):
         self.im_ab = self.im_lab[:, :, 1:]
         self.im_size = self.im_rgb.shape[0:2]
 
-        self.im_ab0 = np.zeros((2, self.load_size, self.load_size))
-        self.im_mask0 = np.zeros((1, self.load_size, self.load_size))
+        self.im_ab0 = np.zeros((2, model_h, model_w))
+        self.im_mask0 = np.zeros((1, model_h, model_w))
         self.brushWidth = 2 * self.scale
 
         self.model.load_image(image_file)
@@ -128,9 +145,19 @@ class GUIDraw(QWidget):
         if self.ui_mode == 'none':
             return False
         is_predict = False
+        
+        # Calibrate color to match the L value at the clicked position
         snap_qcolor = self.calibrate_color(self.user_color, self.pos)
         self.color = snap_qcolor
+        
+        # Update color indicator to show the calibrated color
         self.update_color_signal.emit('background-color: %s' % self.color.name())
+        
+        # Update gamut cursor to show the calibrated color
+        c = np.array((snap_qcolor.red(), snap_qcolor.green(), snap_qcolor.blue()), np.uint8)
+        self.update_ab_signal.emit(c)
+        
+        print(f'Color calibrated: user_color=({self.user_color.red()}, {self.user_color.green()}, {self.user_color.blue()}) -> snap_color=({snap_qcolor.red()}, {snap_qcolor.green()}, {snap_qcolor.blue()})')
 
         if self.ui_mode == 'point':
             if move_point:
@@ -193,8 +220,9 @@ class GUIDraw(QWidget):
         return self.uiControl.can_redo()
 
     def scale_point(self, pnt):
-        x = int((pnt.x() - self.dw) / float(self.win_w) * self.load_size)
-        y = int((pnt.y() - self.dh) / float(self.win_h) * self.load_size)
+        model_w, model_h = self.actual_load_size if hasattr(self, 'actual_load_size') else (self.load_size, self.load_size)
+        x = int((pnt.x() - self.dw) / float(self.win_w) * model_w)
+        y = int((pnt.y() - self.dh) / float(self.win_h) * model_h)
         return x, y
 
     def valid_point(self, pnt):
@@ -214,11 +242,20 @@ class GUIDraw(QWidget):
         self.user_color = QColor(128, 128, 128)  # default color red
         self.color = self.user_color
 
-    def change_color(self, pos=None):
+    def change_color(self, pos=None, use_suggest=False):
+        # If use_suggest is True, use current position
+        if use_suggest and self.pos is not None:
+            pos = self.pos
+        
         if pos is not None:
             x, y = self.scale_point(pos)
             L = self.im_lab[y, x, 0]
+            
+            # Update gamut to show valid colors for this L value
             self.update_gamut_signal.emit(L)
+            print(f'Position ({x}, {y}): L value = {L:.1f}')
+            
+            # Get color suggestions
             rgb_colors = self.suggest_color(h=y, w=x, K=9)
             if rgb_colors is not None:
                 rgb_colors[-1, :] = 0.5
@@ -226,12 +263,16 @@ class GUIDraw(QWidget):
             else:
                 print('Warning: No color suggestions generated')
             
+            # Show recently used colors
             used_colors = self.uiControl.used_colors()
             if used_colors is not None:
                 self.used_colors_signal.emit(used_colors)
+            
+            # Calibrate the current user color to this L value
             snap_color = self.calibrate_color(self.user_color, pos)
             c = np.array((snap_color.red(), snap_color.green(), snap_color.blue()), np.uint8)
-
+            
+            # Update gamut cursor to show the calibrated color
             self.update_ab_signal.emit(c)
 
     def calibrate_color(self, c, pos):
@@ -249,17 +290,19 @@ class GUIDraw(QWidget):
         c = QColor(c_rgb[0], c_rgb[1], c_rgb[2])
         self.user_color = c
         
-        # Only calibrate and update if we have a position
-        if self.pos is not None:
+        # Always update the color indicator
+        self.color = c
+        self.update_color_signal.emit('background-color: %s' % self.color.name())
+        
+        # If we have a position (existing point), update it
+        if self.pos is not None and self.uiControl.userEdit is not None:
             snap_qcolor = self.calibrate_color(c, self.pos)
             self.color = snap_qcolor
             self.update_color_signal.emit('background-color: %s' % self.color.name())
             self.uiControl.update_color(snap_qcolor, self.user_color)
             self.compute_result()
-        else:
-            # Just update the user color for next point
-            self.color = c
-            self.update_color_signal.emit('background-color: %s' % self.color.name())
+        
+        print(f'Color set: RGB=({c_rgb[0]}, {c_rgb[1]}, {c_rgb[2]})')
 
     def erase(self):
         self.eraseMode = not self.eraseMode

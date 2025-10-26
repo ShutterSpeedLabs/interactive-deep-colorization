@@ -21,13 +21,26 @@ class GUIGamut(QWidget):
     def set_gamut(self, l_in=50):
         self.l_in = l_in
         self.ab_map, self.mask = self.ab_grid.update_gamut(l_in=l_in)
+        print(f'Gamut updated for L={l_in:.1f}')
         self.update()
 
     def set_ab(self, color):
-        self.color = color
+        # Handle both numpy array and list/tuple
+        if isinstance(color, (list, tuple)):
+            self.color = np.array(color, dtype=np.uint8)
+        else:
+            self.color = color
+        
+        # Convert RGB to LAB
         self.lab = lab_gamut.rgb2lab_1d(self.color)
+        
+        # Get position in gamut widget
         x, y = self.ab_grid.ab2xy(self.lab[1], self.lab[2])
         self.pos = QPointF(x, y)
+        
+        # Debug output
+        print(f'Gamut cursor updated: color={self.color}, lab={self.lab}, pos=({x:.1f}, {y:.1f})')
+        
         self.update()
 
     def is_valid_point(self, pos):
@@ -99,4 +112,7 @@ class GUIGamut(QWidget):
         self.lab = None
         self.pos = None
         self.mouseClicked = False
+        self.l_in = 50  # Default L value
+        # Initialize with default L value
+        self.set_gamut(self.l_in)
         self.update()

@@ -42,8 +42,9 @@ def parse_args():
     parser.add_argument('--backend', dest='backend', type=str, help='caffe or pytorch', default='caffe')
     parser.add_argument('--pytorch_maskcent', dest='pytorch_maskcent', help='need to center mask (activate for siggraph_pretrained but not for converted caffemodel)', action='store_true')
 
-    # ***** DEPRECATED *****
-    parser.add_argument('--load_size', dest='load_size', help='image size', type=int, default=256)
+    # Model input size
+    parser.add_argument('--load_size', dest='load_size', help='model input image size (must be divisible by 4)', type=int, default=256, choices=[128, 256, 512, 1024])
+    parser.add_argument('--use_dynamic_size', dest='use_dynamic_size', help='use actual image dimensions instead of fixed load_size', action='store_true')
 
     args = parser.parse_args()
     return args
@@ -62,16 +63,16 @@ if __name__ == '__main__':
 
     if args.backend == 'caffe':
         # initialize the colorization model
-        colorModel = CI.ColorizeImageCaffe(Xd=args.load_size)
+        colorModel = CI.ColorizeImageCaffe(Xd=args.load_size, use_dynamic_size=args.use_dynamic_size)
         colorModel.prep_net(args.gpu, args.color_prototxt, args.color_caffemodel)
 
-        distModel = CI.ColorizeImageCaffeDist(Xd=args.load_size)
+        distModel = CI.ColorizeImageCaffeDist(Xd=args.load_size, use_dynamic_size=args.use_dynamic_size)
         distModel.prep_net(args.gpu, args.dist_prototxt, args.dist_caffemodel)
     elif args.backend == 'pytorch':
-        colorModel = CI.ColorizeImageTorch(Xd=args.load_size,maskcent=args.pytorch_maskcent)
+        colorModel = CI.ColorizeImageTorch(Xd=args.load_size, maskcent=args.pytorch_maskcent, use_dynamic_size=args.use_dynamic_size)
         colorModel.prep_net(gpu_id=args.gpu, path=args.color_model)
 
-        distModel = CI.ColorizeImageTorchDist(Xd=args.load_size,maskcent=args.pytorch_maskcent)
+        distModel = CI.ColorizeImageTorchDist(Xd=args.load_size, maskcent=args.pytorch_maskcent, use_dynamic_size=args.use_dynamic_size)
         distModel.prep_net(gpu_id=args.gpu, path=args.color_model, dist=True)
     else:
         print('backend type [%s] not found!' % args.backend)
