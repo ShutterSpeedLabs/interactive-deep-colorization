@@ -24,6 +24,7 @@ class GUIDraw(QWidget):
     used_colors_signal = pyqtSignal(np.ndarray)
     update_ab_signal = pyqtSignal(np.ndarray)
     update_result_signal = pyqtSignal(np.ndarray)
+    grayscale_loaded_signal = pyqtSignal(np.ndarray)
 
     def __init__(self, model, dist_model=None, load_size=256, win_size=512):
         QWidget.__init__(self)
@@ -136,6 +137,9 @@ class GUIDraw(QWidget):
         if (self.dist_model is not None):
             self.dist_model.set_image(self.im_rgb)
             self.predict_color()
+        
+        # Notify reference palette about the grayscale image
+        self.grayscale_loaded_signal.emit(self.im_rgb)
 
     def update_im(self):
         self.update()
@@ -339,6 +343,63 @@ class GUIDraw(QWidget):
     def enable_gray(self):
         self.use_gray = not self.use_gray
         self.update()
+    
+    def apply_color_points(self, color_points):
+        """
+        Apply multiple color points automatically
+        
+        Args:
+            color_points: List of (x, y, r, g, b) tuples in model coordinates
+        """
+        if not self.image_loaded:
+            print("No image loaded!")
+            return
+        
+        print(f"\nApplying {len(color_points)} color points automatically...")
+        print(f"Image dimensions: win_w={self.win_w}, win_h={self.win_h}")
+        print(f"Model dimensions: {self.actual_load_size if hasattr(self, 'actual_load_size') else (self.load_size, self.load_size)}")
+        
+        # Don't reset - keep existing points
+        # self.reset()
+        
+        # Apply each color point
+        applied_count = 0
+        for i, (x, y, r, g, b) in enumerate(color_points):
+            # color_points are in model space (e.g., 256x256 or actual image size)
+            # Need to convert to window space
+            model_w, model_h = self.actual_load_size if hasattr(self, 'actual_load_size') else (self.load_size, self.load_size)
+            
+            # Convert from model coordinates to window coordinates
+            win_x = int(x * self.win_w / model_w) + self.dw
+            win_y = int(y * self.win_h / model_h) + self.dh
+            
+            if i < 3:  # Debug first 3 points
+                print(f"  Point {i+1}: model({x}, {y}) -> window({win_x}, {win_y}) color=RGB({r}, {g}, {b})")
+            
+            # Create QPoint
+            pos = QPoint(win_x, win_y)
+            
+            # Validate point
+            valid_pos = self.valid_point(pos)
+            if not valid_pos:
+                if i < 3:
+                    print(f"    -> Invalid point, skipping")
+                continue
+            
+            # Set color
+            self.user_color = QColor(int(r), int(g), int(b))
+            self.pos = valid_pos
+            self.ui_mode = 'point'
+            
+            # Add point
+            self.update_ui(move_point=False)
+            applied_count += 1
+        
+        # Compute final result
+        self.compute_result()
+        
+        print(f"Applied {applied_count}/{len(color_points)} color points successfully!")
+        print(f"Total points in image: {len(self.uiControl.userEdits)}\n")
 
     def predict_color(self):
         if self.dist_model is not None and self.image_loaded:

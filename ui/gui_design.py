@@ -171,6 +171,8 @@ class GUIDesign(QWidget):
         # Connect reference palette signals
         self.referencePalette.update_color_signal.connect(self.drawWidget.set_color)
         self.referencePalette.update_color_signal.connect(self.gamutWidget.set_ab)
+        self.referencePalette.auto_colorize_signal.connect(self.drawWidget.apply_color_points)
+        self.drawWidget.grayscale_loaded_signal.connect(self.referencePalette.set_grayscale_image)
         # menu events
         self.bGray.setChecked(True)
         self.bRestart.clicked.connect(self.reset)
