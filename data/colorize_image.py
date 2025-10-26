@@ -227,8 +227,15 @@ class ColorizeImageTorch(ColorizeImageBase):
         for key in list(state_dict.keys()):  # need to copy keys here because we mutate in loop
             self.__patch_instance_norm_state_dict(state_dict, self.net, key.split('.'))
         self.net.load_state_dict(state_dict)
-        if gpu_id != None:
-            self.net.cuda()
+        if gpu_id is not None and gpu_id >= 0:
+            import torch
+            if torch.cuda.is_available():
+                self.net.cuda(gpu_id)
+                print(f'Model loaded on GPU {gpu_id}')
+            else:
+                print('CUDA not available, using CPU')
+        else:
+            print('Using CPU mode')
         self.net.eval()
         self.net_set = True
 

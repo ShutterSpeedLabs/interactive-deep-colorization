@@ -141,9 +141,11 @@ class SIGGRAPHGenerator(nn.Module):
         mask_B = torch.Tensor(mask_B)[None, :, :, :]
         mask_B = mask_B - maskcent
         
-        # input_A = torch.Tensor(input_A).cuda()[None, :, :, :]
-        # input_B = torch.Tensor(input_B).cuda()[None, :, :, :]
-        # mask_B = torch.Tensor(mask_B).cuda()[None, :, :, :]
+        # Move to same device as model
+        device = next(self.parameters()).device
+        input_A = input_A.to(device)
+        input_B = input_B.to(device)
+        mask_B = mask_B.to(device)
 
         conv1_2 = self.model1(torch.cat((input_A / 100., input_B / 110., mask_B), dim=1))
         conv2_2 = self.model2(conv1_2[:, :, ::2, ::2])
