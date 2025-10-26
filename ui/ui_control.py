@@ -1,6 +1,7 @@
 import numpy as np
-from PyQt4.QtCore import *
-from PyQt4.QtGui import *
+from PyQt5.QtCore import *
+from PyQt5.QtGui import *
+from PyQt5.QtWidgets import *
 import cv2
 
 
@@ -92,6 +93,11 @@ class UIControl:
         self.userEdit = None
         self.userEdits = []
         self.ui_count = 0
+        
+        # Undo/Redo stacks
+        self.undo_stack = []
+        self.redo_stack = []
+        self.max_history = 50  # Maximum number of undo steps
 
     def setImageSize(self, img_size):
         self.img_size = img_size
@@ -103,6 +109,8 @@ class UIControl:
         isErase = False
         for id, ue in enumerate(self.userEdits):
             if ue.is_same(pnt):
+                # Save state before erasing
+                self.save_state()
                 self.userEdits.remove(ue)
                 print('remove user edit %d\n' % id)
                 isErase = True
@@ -122,6 +130,8 @@ class UIControl:
                 break
 
         if self.userEdit is None:
+            # Save state before adding new point
+            self.save_state()
             self.userEdit = PointEdit(self.win_size, self.load_size, self.img_size)
             self.userEdits.append(self.userEdit)
             print('add user edit %d\n' % len(self.userEdits))
@@ -190,3 +200,66 @@ class UIControl:
         self.userEdits = []
         self.userEdit = None
         self.ui_count = 0
+        self.undo_stack = []
+        self.redo_stack = []
+    
+    def save_state(self):
+        """Save current state to undo stack"""
+        import copy
+        # Deep copy the current state
+        state = {
+            'userEdits': copy.deepcopy(self.userEdits),
+            'ui_count': self.ui_count
+        }
+        self.undo_stack.append(state)
+        
+        # Limit stack size
+        if len(self.undo_stack) > self.max_history:
+            self.undo_stack.pop(0)
+        
+        # Clear redo stack when new action is performed
+        self.redo_stack = []
+    
+    def undo(self):
+        """Undo last action"""
+        if len(self.undo_stack) > 0:
+            # Save current state to redo stack
+            import copy
+            current_state = {
+                'userEdits': copy.deepcopy(self.userEdits),
+                'ui_count': self.ui_count
+            }
+            self.redo_stack.append(current_state)
+            
+            # Restore previous state
+            state = self.undo_stack.pop()
+            self.userEdits = state['userEdits']
+            self.ui_count = state['ui_count']
+            return True
+        return False
+    
+    def redo(self):
+        """Redo last undone action"""
+        if len(self.redo_stack) > 0:
+            # Save current state to undo stack
+            import copy
+            current_state = {
+                'userEdits': copy.deepcopy(self.userEdits),
+                'ui_count': self.ui_count
+            }
+            self.undo_stack.append(current_state)
+            
+            # Restore next state
+            state = self.redo_stack.pop()
+            self.userEdits = state['userEdits']
+            self.ui_count = state['ui_count']
+            return True
+        return False
+    
+    def can_undo(self):
+        """Check if undo is available"""
+        return len(self.undo_stack) > 0
+    
+    def can_redo(self):
+        """Check if redo is available"""
+        return len(self.redo_stack) > 0

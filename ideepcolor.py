@@ -2,12 +2,15 @@ from __future__ import print_function
 import sys
 import argparse
 import qdarkstyle
-from PyQt4.QtGui import QApplication, QIcon
-from PyQt4.QtCore import Qt
+# ✅ Updated for PyQt5
+from PyQt5.QtWidgets import QApplication
+from PyQt5.QtGui import QIcon
+from PyQt5.QtCore import Qt
 from ui import gui_design
 from data import colorize_image as CI
 
 sys.path.append('./caffe_files')
+
 
 
 def parse_args():
@@ -66,20 +69,43 @@ if __name__ == '__main__':
         distModel.prep_net(args.gpu, args.dist_prototxt, args.dist_caffemodel)
     elif args.backend == 'pytorch':
         colorModel = CI.ColorizeImageTorch(Xd=args.load_size,maskcent=args.pytorch_maskcent)
-        colorModel.prep_net(path=args.color_model)
+        colorModel.prep_net(gpu_id=args.gpu, path=args.color_model)
 
         distModel = CI.ColorizeImageTorchDist(Xd=args.load_size,maskcent=args.pytorch_maskcent)
-        distModel.prep_net(path=args.color_model, dist=True)
+        distModel.prep_net(gpu_id=args.gpu, path=args.color_model, dist=True)
     else:
         print('backend type [%s] not found!' % args.backend)
 
     # initialize application
     app = QApplication(sys.argv)
+    
+    # Get screen size
+    screen = app.primaryScreen()
+    screen_geometry = screen.availableGeometry()
+    screen_width = screen_geometry.width()
+    screen_height = screen_geometry.height()
+    
+    # Calculate appropriate window size (80% of screen)
+    window_width = int(screen_width * 0.8)
+    window_height = int(screen_height * 0.8)
+    
+    # Adjust win_size based on screen
+    if args.win_size > window_height - 200:
+        args.win_size = window_height - 200
+        args.win_size = int(args.win_size / 4.0) * 4  # make divisible by 4
+    
     window = gui_design.GUIDesign(color_model=colorModel, dist_model=distModel,
                                   img_file=args.image_file, load_size=args.load_size, win_size=args.win_size)
     app.setStyleSheet(qdarkstyle.load_stylesheet(pyside=False))  # comment this if you do not like dark stylesheet
     app.setWindowIcon(QIcon('imgs/logo.png'))  # load logo
-    window.setWindowTitle('iColor')
-    window.setWindowFlags(window.windowFlags() & ~Qt.WindowMaximizeButtonHint)   # fix window siz
+    window.setWindowTitle('iColor - Interactive Deep Colorization')
+    
+    # Enable maximize/minimize buttons and make window resizable
+    window.setWindowFlags(Qt.Window | Qt.WindowMinimizeButtonHint | Qt.WindowMaximizeButtonHint | Qt.WindowCloseButtonHint)
+    
+    # Set initial size and position
+    window.resize(window_width, window_height)
+    window.move((screen_width - window_width) // 2, (screen_height - window_height) // 2)
+    
     window.show()
     app.exec_()

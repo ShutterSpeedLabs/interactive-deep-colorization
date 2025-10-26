@@ -1,9 +1,12 @@
-from PyQt4.QtCore import *
-from PyQt4.QtGui import *
+from PyQt5.QtCore import *
+from PyQt5.QtGui import *
+from PyQt5.QtWidgets import *
 from . import gui_draw
 from . import gui_vis
 from . import gui_gamut
 from . import gui_palette
+from . import gui_preset_palette
+from . import gui_reference_colors
 import time
 
 
@@ -12,16 +15,32 @@ class GUIDesign(QWidget):
                  win_size=256, save_all=True):
         # draw the layout
         QWidget.__init__(self)
+        
+        # Set size policy to allow resizing
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        
         # main layout
         mainLayout = QHBoxLayout()
         self.setLayout(mainLayout)
+        
+        # Left panel with scroll area for color selection tools
+        leftScrollArea = QScrollArea()
+        leftScrollArea.setWidgetResizable(True)
+        leftScrollArea.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        leftScrollArea.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        leftScrollArea.setMinimumWidth(280)
+        leftScrollArea.setMaximumWidth(400)
+        
+        leftWidget = QWidget()
+        colorLayout = QVBoxLayout()
+        leftWidget.setLayout(colorLayout)
+        leftScrollArea.setWidget(leftWidget)
+        mainLayout.addWidget(leftScrollArea)
+        
         # gamut layout
         self.gamutWidget = gui_gamut.GUIGamut(gamut_size=160)
         gamutLayout = self.AddWidget(self.gamutWidget, 'ab Color Gamut')
-        colorLayout = QVBoxLayout()
-
         colorLayout.addLayout(gamutLayout)
-        mainLayout.addLayout(colorLayout)
 
         # palette
         self.customPalette = gui_palette.GUIPalette(grid_sz=(10, 1))
@@ -31,6 +50,11 @@ class GUIDesign(QWidget):
         upLayout = self.AddWidget(self.usedPalette, 'Recently used colors')
         colorLayout.addLayout(upLayout)
 
+        # Add preset color palette
+        self.presetPalette = gui_preset_palette.GUIPresetPalette()
+        presetLayout = self.AddWidget(self.presetPalette, 'Preset Colors')
+        colorLayout.addLayout(presetLayout)
+
         self.colorPush = QPushButton()  # to visualize the selected color
         self.colorPush.setFixedWidth(self.customPalette.width())
         self.colorPush.setFixedHeight(25)
@@ -39,12 +63,14 @@ class GUIDesign(QWidget):
         colorLayout.addLayout(colorPushLayout)
         colorLayout.setAlignment(Qt.AlignTop)
 
-        # drawPad layout
+        # drawPad layout - center panel
         drawPadLayout = QVBoxLayout()
-        mainLayout.addLayout(drawPadLayout)
         self.drawWidget = gui_draw.GUIDraw(color_model, dist_model, load_size=load_size, win_size=win_size)
-        drawPadLayout = self.AddWidget(self.drawWidget, 'Drawing Pad')
-        mainLayout.addLayout(drawPadLayout)
+        drawPadWidget = self.AddWidget(self.drawWidget, 'Drawing Pad')
+        drawPadLayout.addLayout(drawPadWidget)
+        
+        # Add to main layout with stretch factor
+        mainLayout.addLayout(drawPadLayout, 1)
 
         drawPadMenu = QHBoxLayout()
 
@@ -55,15 +81,46 @@ class GUIDesign(QWidget):
         self.bLoad.setToolTip('load an input image')
         self.bSave = QPushButton("&Save")
         self.bSave.setToolTip('Save the current result.')
+        
+        self.bUndo = QPushButton("&Undo")
+        self.bUndo.setToolTip('Undo last action (Ctrl+Z)')
+        self.bUndo.setEnabled(False)
+        
+        self.bRedo = QPushButton("Re&do")
+        self.bRedo.setToolTip('Redo last undone action (Ctrl+Y)')
+        self.bRedo.setEnabled(False)
 
         drawPadMenu.addWidget(self.bGray)
         drawPadMenu.addWidget(self.bLoad)
         drawPadMenu.addWidget(self.bSave)
+        drawPadMenu.addWidget(self.bUndo)
+        drawPadMenu.addWidget(self.bRedo)
 
         drawPadLayout.addLayout(drawPadMenu)
+        
+        # Add instruction label
+        self.instructionLabel = QLabel("Left-click: Add/Move point | Right-click: Remove point | Mouse wheel: Change brush size")
+        self.instructionLabel.setWordWrap(True)
+        self.instructionLabel.setStyleSheet("QLabel { font-size: 9pt; padding: 4px; color: #aaa; }")
+        drawPadLayout.addWidget(self.instructionLabel)
+        
+        # Right side layout for result and reference with scroll
+        rightScrollArea = QScrollArea()
+        rightScrollArea.setWidgetResizable(True)
+        rightScrollArea.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        rightScrollArea.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        rightScrollArea.setMinimumWidth(win_size + 40)
+        
+        rightWidget = QWidget()
+        rightLayout = QVBoxLayout()
+        rightWidget.setLayout(rightLayout)
+        rightScrollArea.setWidget(rightWidget)
+        mainLayout.addWidget(rightScrollArea, 1)
+        
+        # Result widget
         self.visWidget = gui_vis.GUI_VIS(win_size=win_size, scale=win_size / float(load_size))
         visWidgetLayout = self.AddWidget(self.visWidget, 'Result')
-        mainLayout.addLayout(visWidgetLayout)
+        rightLayout.addLayout(visWidgetLayout)
 
         self.bRestart = QPushButton("&Restart")
         self.bRestart.setToolTip('Restart the system')
@@ -72,32 +129,48 @@ class GUIDesign(QWidget):
         self.bQuit.setToolTip('Quit the system.')
         visWidgetMenu = QHBoxLayout()
         visWidgetMenu.addWidget(self.bRestart)
-
         visWidgetMenu.addWidget(self.bQuit)
         visWidgetLayout.addLayout(visWidgetMenu)
+        
+        # Add reference image below result
+        self.referencePalette = gui_reference_colors.GUIReferenceColors(win_size=win_size)
+        referenceLayout = self.AddWidget(self.referencePalette, 'Reference Image (Click to pick colors)')
+        rightLayout.addLayout(referenceLayout)
 
         self.drawWidget.update()
         self.visWidget.update()
+        # Connect button click
         self.colorPush.clicked.connect(self.drawWidget.change_color)
-        # color indicator
-        self.connect(self.drawWidget, SIGNAL('update_color'), self.colorPush.setStyleSheet)
-        # update result
-        self.connect(self.drawWidget, SIGNAL('update_result'), self.visWidget.update_result)
-        self.connect(self.visWidget, SIGNAL('update_color'), self.gamutWidget.set_ab)
-        self.connect(self.visWidget, SIGNAL('update_color'), self.drawWidget.set_color)
-        # update gamut
-        self.connect(self.drawWidget, SIGNAL('update_gamut'), self.gamutWidget.set_gamut)
-        self.connect(self.drawWidget, SIGNAL('update_ab'), self.gamutWidget.set_ab)
-        self.connect(self.gamutWidget, SIGNAL('update_color'), self.drawWidget.set_color)
-        # connect palette
-        self.connect(self.drawWidget, SIGNAL('suggest_colors'), self.customPalette.set_colors)
-        # self.connect(self.drawWidget, SIGNAL('change_color_id'), self.customPalette.update_color_id)
-        self.connect(self.customPalette, SIGNAL('update_color'), self.drawWidget.set_color)
-        self.connect(self.customPalette, SIGNAL('update_color'), self.gamutWidget.set_ab)
-
-        self.connect(self.drawWidget, SIGNAL('used_colors'), self.usedPalette.set_colors)
-        self.connect(self.usedPalette, SIGNAL('update_color'), self.drawWidget.set_color)
-        self.connect(self.usedPalette, SIGNAL('update_color'), self.gamutWidget.set_ab)
+        
+        # Connect color indicator signals
+        self.drawWidget.update_color_signal.connect(self.colorPush.setStyleSheet)
+        
+        # Connect result update signals
+        self.drawWidget.update_result_signal.connect(self.visWidget.update_result)
+        self.visWidget.update_color_signal.connect(self.gamutWidget.set_ab)
+        self.visWidget.update_color_signal.connect(self.drawWidget.set_color)
+        
+        # Connect gamut update signals
+        self.drawWidget.update_gamut_signal.connect(self.gamutWidget.set_gamut)
+        self.drawWidget.update_ab_signal.connect(self.gamutWidget.set_ab)
+        self.gamutWidget.update_color_signal.connect(self.drawWidget.set_color)
+        
+        # Connect palette signals
+        self.drawWidget.suggest_colors_signal.connect(self.customPalette.set_colors)
+        self.customPalette.update_color_signal.connect(self.drawWidget.set_color)
+        self.customPalette.update_color_signal.connect(self.gamutWidget.set_ab)
+        
+        self.drawWidget.used_colors_signal.connect(self.usedPalette.set_colors)
+        self.usedPalette.update_color_signal.connect(self.drawWidget.set_color)
+        self.usedPalette.update_color_signal.connect(self.gamutWidget.set_ab)
+        
+        # Connect preset palette signals
+        self.presetPalette.update_color_signal.connect(self.drawWidget.set_color)
+        self.presetPalette.update_color_signal.connect(self.gamutWidget.set_ab)
+        
+        # Connect reference palette signals
+        self.referencePalette.update_color_signal.connect(self.drawWidget.set_color)
+        self.referencePalette.update_color_signal.connect(self.gamutWidget.set_ab)
         # menu events
         self.bGray.setChecked(True)
         self.bRestart.clicked.connect(self.reset)
@@ -105,6 +178,11 @@ class GUIDesign(QWidget):
         self.bGray.toggled.connect(self.enable_gray)
         self.bSave.clicked.connect(self.save)
         self.bLoad.clicked.connect(self.load)
+        self.bUndo.clicked.connect(self.undo)
+        self.bRedo.clicked.connect(self.redo)
+        
+        # Connect to update undo/redo button states
+        self.drawWidget.update_result_signal.connect(self.update_undo_redo_buttons)
 
         self.start_t = time.time()
 
@@ -153,20 +231,56 @@ class GUIDesign(QWidget):
     def change_color(self):
         print('change color')
         self.drawWidget.change_color(use_suggest=True)
+    
+    def undo(self):
+        """Undo last action"""
+        if self.drawWidget.undo():
+            self.update_undo_redo_buttons()
+    
+    def redo(self):
+        """Redo last undone action"""
+        if self.drawWidget.redo():
+            self.update_undo_redo_buttons()
+    
+    def update_undo_redo_buttons(self):
+        """Update undo/redo button states"""
+        self.bUndo.setEnabled(self.drawWidget.can_undo())
+        self.bRedo.setEnabled(self.drawWidget.can_redo())
 
     def keyPressEvent(self, event):
-        if event.key() == Qt.Key_R:
+        # Check for Ctrl modifier
+        ctrl_pressed = event.modifiers() & Qt.ControlModifier
+        
+        if ctrl_pressed and event.key() == Qt.Key_Z:
+            # Ctrl+Z: Undo
+            self.undo()
+        elif ctrl_pressed and event.key() == Qt.Key_Y:
+            # Ctrl+Y: Redo
+            self.redo()
+        elif ctrl_pressed and (event.key() == Qt.Key_R or event.key() == Qt.Key_Shift):
+            # Ctrl+Shift+Z: Also redo
+            if event.modifiers() & Qt.ShiftModifier:
+                self.redo()
+        elif event.key() == Qt.Key_R:
             self.reset()
-
-        if event.key() == Qt.Key_Q:
+        elif event.key() == Qt.Key_Q:
             self.save()
             self.quit()
-
-        if event.key() == Qt.Key_S:
+        elif event.key() == Qt.Key_S:
             self.save()
-
-        if event.key() == Qt.Key_G:
+        elif event.key() == Qt.Key_G:
             self.bGray.toggle()
-
-        if event.key() == Qt.Key_L:
+        elif event.key() == Qt.Key_L:
             self.load()
+        elif event.key() == Qt.Key_F11:
+            # Toggle fullscreen
+            if self.isFullScreen():
+                self.showNormal()
+            else:
+                self.showFullScreen()
+    
+    def resizeEvent(self, event):
+        """Handle window resize"""
+        super().resizeEvent(event)
+        # Update widgets if needed
+        self.update()

@@ -1,11 +1,15 @@
 import cv2
-from PyQt4.QtCore import *
-from PyQt4.QtGui import *
+from PyQt5.QtCore import *
+from PyQt5.QtGui import *
+from PyQt5.QtWidgets import *
 from data import lab_gamut
 import numpy as np
 
 
 class GUIGamut(QWidget):
+    # Define signals
+    update_color_signal = pyqtSignal(np.ndarray)
+
     def __init__(self, gamut_size=110):
         QWidget.__init__(self)
         self.gamut_size = gamut_size
@@ -27,7 +31,7 @@ class GUIGamut(QWidget):
         self.update()
 
     def is_valid_point(self, pos):
-        if pos is None:
+        if pos is None or self.mask is None:
             return False
         else:
             x = pos.x()
@@ -44,7 +48,7 @@ class GUIGamut(QWidget):
         L = self.l_in
         lab = np.array([L, a, b])
         color = lab_gamut.lab2rgb_1d(lab, clip=True, dtype='uint8')
-        self.emit(SIGNAL('update_color'), color)
+        self.update_color_signal.emit(color)
         self.update()
 
     def paintEvent(self, event):
@@ -54,7 +58,7 @@ class GUIGamut(QWidget):
         painter.fillRect(event.rect(), Qt.white)
         if self.ab_map is not None:
             ab_map = cv2.resize(self.ab_map, (self.win_size, self.win_size))
-            qImg = QImage(ab_map.tostring(), self.win_size, self.win_size, QImage.Format_RGB888)
+            qImg = QImage(ab_map.tobytes(), self.win_size, self.win_size, self.win_size * 3, QImage.Format_RGB888)
             painter.drawImage(0, 0, qImg)
 
         painter.setPen(QPen(Qt.gray, 3, Qt.DotLine, cap=Qt.RoundCap, join=Qt.RoundJoin))

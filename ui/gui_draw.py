@@ -1,11 +1,11 @@
 import numpy as np
 import cv2
-from PyQt4.QtCore import *
-from PyQt4.QtGui import *
-try:
-    from PyQt4.QtCore import QString
-except ImportError:
-    QString = str
+from PyQt5.QtCore import *
+from PyQt5.QtGui import *
+from PyQt5.QtWidgets import *
+
+# QString is not needed in PyQt5 as Python strings are used directly
+QString = str
 from .ui_control import UIControl
 
 from data import lab_gamut
@@ -17,6 +17,14 @@ import sys
 
 
 class GUIDraw(QWidget):
+    # Define signals
+    update_color_signal = pyqtSignal(str)
+    update_gamut_signal = pyqtSignal(float)
+    suggest_colors_signal = pyqtSignal(np.ndarray)
+    used_colors_signal = pyqtSignal(np.ndarray)
+    update_ab_signal = pyqtSignal(np.ndarray)
+    update_result_signal = pyqtSignal(np.ndarray)
+
     def __init__(self, model, dist_model=None, load_size=256, win_size=512):
         QWidget.__init__(self)
         self.model = None
@@ -122,7 +130,7 @@ class GUIDraw(QWidget):
         is_predict = False
         snap_qcolor = self.calibrate_color(self.user_color, self.pos)
         self.color = snap_qcolor
-        self.emit(SIGNAL('update_color'), QString('background-color: %s' % self.color.name()))
+        self.update_color_signal.emit('background-color: %s' % self.color.name())
 
         if self.ui_mode == 'point':
             if move_point:
@@ -153,6 +161,36 @@ class GUIDraw(QWidget):
         self.compute_result()
         self.predict_color()
         self.update()
+    
+    def undo(self):
+        """Undo last action"""
+        if self.uiControl.undo():
+            print('Undo performed')
+            self.compute_result()
+            self.update()
+            return True
+        else:
+            print('Nothing to undo')
+            return False
+    
+    def redo(self):
+        """Redo last undone action"""
+        if self.uiControl.redo():
+            print('Redo performed')
+            self.compute_result()
+            self.update()
+            return True
+        else:
+            print('Nothing to redo')
+            return False
+    
+    def can_undo(self):
+        """Check if undo is available"""
+        return self.uiControl.can_undo()
+    
+    def can_redo(self):
+        """Check if redo is available"""
+        return self.uiControl.can_redo()
 
     def scale_point(self, pnt):
         x = int((pnt.x() - self.dw) / float(self.win_w) * self.load_size)
@@ -180,17 +218,21 @@ class GUIDraw(QWidget):
         if pos is not None:
             x, y = self.scale_point(pos)
             L = self.im_lab[y, x, 0]
-            self.emit(SIGNAL('update_gamut'), L)
+            self.update_gamut_signal.emit(L)
             rgb_colors = self.suggest_color(h=y, w=x, K=9)
-            rgb_colors[-1, :] = 0.5
-
-            self.emit(SIGNAL('suggest_colors'), rgb_colors)
+            if rgb_colors is not None:
+                rgb_colors[-1, :] = 0.5
+                self.suggest_colors_signal.emit(rgb_colors)
+            else:
+                print('Warning: No color suggestions generated')
+            
             used_colors = self.uiControl.used_colors()
-            self.emit(SIGNAL('used_colors'), used_colors)
+            if used_colors is not None:
+                self.used_colors_signal.emit(used_colors)
             snap_color = self.calibrate_color(self.user_color, pos)
             c = np.array((snap_color.red(), snap_color.green(), snap_color.blue()), np.uint8)
 
-            self.emit(SIGNAL('update_ab'), c)
+            self.update_ab_signal.emit(c)
 
     def calibrate_color(self, c, pos):
         x, y = self.scale_point(pos)
@@ -206,18 +248,26 @@ class GUIDraw(QWidget):
     def set_color(self, c_rgb):
         c = QColor(c_rgb[0], c_rgb[1], c_rgb[2])
         self.user_color = c
-        snap_qcolor = self.calibrate_color(c, self.pos)
-        self.color = snap_qcolor
-        self.emit(SIGNAL('update_color'), QString('background-color: %s' % self.color.name()))
-        self.uiControl.update_color(snap_qcolor, self.user_color)
-        self.compute_result()
+        
+        # Only calibrate and update if we have a position
+        if self.pos is not None:
+            snap_qcolor = self.calibrate_color(c, self.pos)
+            self.color = snap_qcolor
+            self.update_color_signal.emit('background-color: %s' % self.color.name())
+            self.uiControl.update_color(snap_qcolor, self.user_color)
+            self.compute_result()
+        else:
+            # Just update the user color for next point
+            self.color = c
+            self.update_color_signal.emit('background-color: %s' % self.color.name())
 
     def erase(self):
         self.eraseMode = not self.eraseMode
 
     def load_image(self):
-        img_path = unicode(QFileDialog.getOpenFileName(self, 'load an input image'))
-        self.init_result(img_path)
+        img_path, _ = QFileDialog.getOpenFileName(self, 'load an input image')
+        if img_path:  # Check if user selected a file
+            self.init_result(img_path)
 
     def save_result(self):
         path = os.path.abspath(self.image_file)
@@ -259,14 +309,17 @@ class GUIDraw(QWidget):
 
     def suggest_color(self, h, w, K=5):
         if self.dist_model is not None and self.image_loaded:
+            print(f'Suggesting colors at position ({h}, {w})')
             ab, conf = self.dist_model.get_ab_reccs(h=h, w=w, K=K, N=25000, return_conf=True)
             L = np.tile(self.im_lab[h, w, 0], (K, 1))
             colors_lab = np.concatenate((L, ab), axis=1)
             colors_lab3 = colors_lab[:, np.newaxis, :]
             colors_rgb = np.clip(np.squeeze(color.lab2rgb(colors_lab3)), 0, 1)
             colors_rgb_withcurr = np.concatenate((self.model.get_img_forward()[h, w, np.newaxis, :] / 255., colors_rgb), axis=0)
+            print(f'Generated {colors_rgb_withcurr.shape[0]} color suggestions')
             return colors_rgb_withcurr
         else:
+            print(f'Cannot suggest colors: dist_model={self.dist_model is not None}, image_loaded={self.image_loaded}')
             return None
 
     def compute_result(self):
@@ -282,7 +335,7 @@ class GUIDraw(QWidget):
         pred_lab = np.concatenate((self.l_win[..., np.newaxis], ab_win), axis=2)
         pred_rgb = (np.clip(color.lab2rgb(pred_lab), 0, 1) * 255).astype('uint8')
         self.result = pred_rgb
-        self.emit(SIGNAL('update_result'), self.result)
+        self.update_result_signal.emit(self.result)
         self.update()
 
     def paintEvent(self, event):
@@ -296,14 +349,14 @@ class GUIDraw(QWidget):
             im = self.result
 
         if im is not None:
-            qImg = QImage(im.tostring(), im.shape[1], im.shape[0], QImage.Format_RGB888)
+            qImg = QImage(im.tobytes(), im.shape[1], im.shape[0], im.shape[1] * 3, QImage.Format_RGB888)
             painter.drawImage(self.dw, self.dh, qImg)
 
         self.uiControl.update_painter(painter)
         painter.end()
 
     def wheelEvent(self, event):
-        d = event.delta() / 120
+        d = event.angleDelta().y() / 120
         self.brushWidth = min(4.05 * self.scale, max(0, self.brushWidth + d * self.scale))
         print('update brushWidth = %f' % self.brushWidth)
         self.update_ui(move_point=True)
@@ -326,26 +379,46 @@ class GUIDraw(QWidget):
             if event.button() == Qt.LeftButton:
                 self.pos = pos
                 self.ui_mode = 'point'
-                self.change_color(pos)
+                # Only update color suggestions for new points
+                # Check if this is a new point or existing point
+                is_new_point = True
+                for ue in self.uiControl.userEdits:
+                    if ue.is_same(pos):
+                        is_new_point = False
+                        break
+                
+                if is_new_point:
+                    # New point - show color suggestions
+                    self.change_color(pos)
+                
                 self.update_ui(move_point=False)
                 self.compute_result()
 
             if event.button() == Qt.RightButton:
-                # draw the stroke
+                # Right-click to erase point
                 self.pos = pos
                 self.ui_mode = 'erase'
-                self.update_ui(move_point=False)
+                is_removed = self.update_ui(move_point=False)
+                if is_removed:
+                    print('Point removed')
                 self.compute_result()
 
     def mouseMoveEvent(self, event):
-        self.pos = self.valid_point(event.pos())
-        if self.pos is not None:
+        new_pos = self.valid_point(event.pos())
+        if new_pos is not None and self.pos is not None:
             if self.ui_mode == 'point':
-                self.update_ui(move_point=True)
-                self.compute_result()
+                # Only update if we're dragging an existing point
+                if not self.is_same_point(self.pos, new_pos):
+                    self.pos = new_pos
+                    self.update_ui(move_point=True)
+                    self.compute_result()
 
     def mouseReleaseEvent(self, event):
-        pass
+        # Finalize point placement
+        if self.ui_mode == 'point':
+            self.ui_mode = 'none'
+        if self.ui_mode == 'erase':
+            self.ui_mode = 'none'
 
     def sizeHint(self):
         return QSize(self.win_size, self.win_size)  # 28 * 8

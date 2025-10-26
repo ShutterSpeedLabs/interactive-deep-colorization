@@ -1,9 +1,13 @@
-from PyQt4.QtCore import *
-from PyQt4.QtGui import *
+from PyQt5.QtCore import *
+from PyQt5.QtGui import *
+from PyQt5.QtWidgets import *
 import numpy as np
 
 
 class GUIPalette(QWidget):
+    # Define signals
+    update_color_signal = pyqtSignal(np.ndarray)
+
     def __init__(self, grid_sz=(6, 3)):
         QWidget.__init__(self)
         self.color_width = 25
@@ -37,7 +41,6 @@ class GUIPalette(QWidget):
                 grid_y = (n - grid_x) // self.grid_sz[0]
                 x = grid_x * (self.color_width + self.border) + self.border
                 y = grid_y * (self.color_width + self.border) + self.border
-
                 if n == self.color_id:
                     painter.drawEllipse(x, y, self.color_width, self.color_width)
                 else:
@@ -69,10 +72,10 @@ class GUIPalette(QWidget):
     def update_ui(self, color_id):
         self.color_id = int(color_id)
         self.update()
-        if color_id >= 0:
+        if color_id >= 0 and self.colors is not None and color_id < len(self.colors):
             print('choose color (%d) type (%s)' % (color_id, type(color_id)))
             color = self.colors[color_id]
-            self.emit(SIGNAL('update_color'), color)
+            self.update_color_signal.emit(color)
             self.update()
 
     def mousePressEvent(self, event):
